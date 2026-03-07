@@ -35,6 +35,10 @@ export function OAuthConsent() {
       if (error) {
         setError(error.message)
       } else {
+        if ('redirect_url' in data && data.redirect_url) {
+          window.location.href = data.redirect_url
+          return
+        }
         setAuthDetails(data)
       }
 
@@ -76,12 +80,12 @@ export function OAuthConsent() {
 
   return (
     <div>
-      <h1>Authorize {authDetails.client.name}</h1>
+      <h1>Authorize {authDetails.client?.name}</h1>
       <p>This application wants to access your account.</p>
 
       <div>
         <p>
-          <strong>Client:</strong> {authDetails.client.name}
+          <strong>Client:</strong> {authDetails.client?.name}
         </p>
         <p>
           <strong>Redirect URI:</strong> {authDetails.redirect_uri}
