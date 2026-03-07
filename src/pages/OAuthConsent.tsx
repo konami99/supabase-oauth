@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 
@@ -10,9 +10,13 @@ export function OAuthConsent() {
   const [authDetails, setAuthDetails] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const hasRun = useRef(false)
 
   useEffect(() => {
     async function loadAuthDetails() {
+      if (hasRun.current) return
+      hasRun.current = true
+
       if (!authorizationId) {
         setError('Missing authorization_id')
         setLoading(false)
@@ -32,13 +36,12 @@ export function OAuthConsent() {
       // Get authorization details using the authorization_id
       const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
 
-      if (error) {
+      if (data && 'redirect_url' in data && data.redirect_url) {
+        window.location.href = data.redirect_url
+        return
+      } else if (error) {
         setError(error.message)
       } else {
-        if ('redirect_url' in data && data.redirect_url) {
-          window.location.href = data.redirect_url
-          return
-        }
         setAuthDetails(data)
       }
 
