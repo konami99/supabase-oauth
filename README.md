@@ -212,6 +212,15 @@ async def invoke(payload, context=None):
     )
 
     # Step 2: retrieve Supabase token from vault
+    # on_auth_url is called when token is not in vault — stores the authorization
+    # URL so it can be returned to the caller for browser redirect
+    # token_poller ensures the runtime waits for the user to complete consent
+    # before continuing — required when token is not yet in vault
+    auth_url_holder = {}
+
+    def store_auth_url(url):
+        auth_url_holder["url"] = url
+
     @requires_access_token(
         provider_name=CREDENTIAL_PROVIDER_NAME,
         scopes=["email"],
@@ -219,12 +228,16 @@ async def invoke(payload, context=None):
         workload_access_token=workload_resp["workloadAccessToken"],
         base_url=SITE_URL,
         region=REGION,
-        on_auth_url=lambda url: print(f"Authorization required. Visit: {url}"),
+        on_auth_url=store_auth_url,
+        token_poller=TokenPoller(interval=2, timeout=300),
     )
     async def get_supabase_token(*, access_token: str) -> str:
         return access_token
 
     supabase_token = await get_supabase_token()
+
+    if not supabase_token and auth_url_holder.get("url"):
+        return {"authorizationRequired": True, "authorizationUrl": auth_url_holder["url"]}
 
     # Step 3: pass Supabase token to AgentCore Gateway
     mcp_client = MCPClient(
