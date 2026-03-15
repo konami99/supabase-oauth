@@ -133,6 +133,29 @@ Pass this UUID to `GetWorkloadAccessTokenForUserIdCommand` to look up the correc
 
 The runtime uses a custom `requires_access_token` decorator (from [tutorial 07](https://github.com/aws-samples/amazon-bedrock-agentcore-samples/tree/main/01-tutorials/03-AgentCore-identity/07-Outbound_Auth_3LO_ECS_Fargate)) that accepts `workload_access_token` explicitly, unlike the official decorator which reads it from `BedrockAgentCoreApp` context.
 
+**Consent screen behavior:** The consent screen is only triggered when the token is not found in the vault. If a valid token is already cached (keyed by `workload + userId + credentialProvider + scopes`), it is returned directly and no consent is shown. Pass `on_auth_url` to handle the case where the token is missing — AgentCore will call it with the authorization URL so you can redirect the user through the login → consent flow. Without `on_auth_url`, a missing token will result in an error.
+
+**What happens after the user approves consent:** Once the user approves, Supabase redirects to `supabase-oauth-client /callback`, which calls `CompleteResourceTokenAuthCommand` to exchange the auth code for a Supabase access token and store it in the vault. However, the runtime's `requires_access_token` decorator needs a `token_poller` to detect when the token lands in the vault and complete the current invocation. Without `token_poller`, the decorator fires `on_auth_url` and returns without a token — the vault is eventually populated, but the current call does not receive it.
+
+To make the full round-trip work, add a `token_poller`:
+
+```python
+@requires_access_token(
+    ...
+    on_auth_url=lambda url: print(f"Authorization required. Visit: {url}"),
+    token_poller=TokenPoller(interval=2, timeout=300),  # poll every 2s, up to 5 min
+)
+```
+
+With `token_poller` in place, the full round-trip completes within the same runtime invocation:
+
+1. Token not in vault → `on_auth_url` fires with the authorization URL
+2. User completes login → consent → Supabase redirects to `supabase-oauth-client /callback`
+3. `/callback` calls `CompleteResourceTokenAuthCommand` → token stored in vault
+4. `token_poller` detects the token → `client.get_token()` returns it
+5. Decorator injects the token → `get_supabase_token()` returns it
+6. `MCPClient` sends `Authorization: Bearer <supabase_token>` to AgentCore Gateway
+
 ```python
 def requires_access_token(
     *,
@@ -196,6 +219,7 @@ async def invoke(payload, context=None):
         workload_access_token=workload_resp["workloadAccessToken"],
         base_url=SITE_URL,
         region=REGION,
+        on_auth_url=lambda url: print(f"Authorization required. Visit: {url}"),
     )
     async def get_supabase_token(*, access_token: str) -> str:
         return access_token
